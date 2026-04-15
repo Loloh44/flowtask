@@ -1651,6 +1651,51 @@ function handleImportFile(event,forceReplace){
   reader.readAsText(file);
 }
 
+function deepMergeTasks(local, remote){
+  // Choose base (most recently updated)
+  var lDate=local.updatedAt||local.createdAt||'';
+  var rDate=remote.updatedAt||remote.createdAt||'';
+  var base=rDate>lDate?JSON.parse(JSON.stringify(remote)):JSON.parse(JSON.stringify(local));
+  var other=rDate>lDate?local:remote;
+
+  // Merge journal — union by 'at' timestamp, no duplicates
+  var jMap={};
+  (local.journal||[]).forEach(function(j){jMap[j.at]=j;});
+  (remote.journal||[]).forEach(function(j){jMap[j.at]=j;});
+  base.journal=Object.values(jMap).sort(function(a,b){return a.at<b.at?-1:1;});
+
+  // Merge note — keep the longer/more complete one
+  var lNote=(local.note||'').trim();
+  var rNote=(remote.note||'').trim();
+  if(lNote&&rNote&&lNote!==rNote){
+    // If one contains the other, keep the longer
+    if(lNote.includes(rNote))base.note=lNote;
+    else if(rNote.includes(lNote))base.note=rNote;
+    else{
+      // Both have unique content — keep base note, add other as journal entry
+      base.note=rDate>lDate?rNote:lNote;
+      var otherNote=rDate>lDate?lNote:rNote;
+      if(otherNote.length>10){
+        var alreadyIn=base.journal.some(function(j){return j.text===otherNote;});
+        if(!alreadyIn){
+          base.journal.push({at:other.updatedAt||other.createdAt||new Date().toISOString(),text:'[Note fusionnée] '+otherNote});
+        }
+      }
+    }
+  } else {
+    base.note=lNote.length>=rNote.length?lNote:rNote;
+  }
+
+  // Done — if either done, keep done
+  if(local.done||remote.done){
+    base.done=true;
+    base.doneAt=local.doneAt||remote.doneAt;
+  }
+
+  base.updatedAt=new Date().toISOString();
+  return base;
+}
+
 function showImportComparison(data){
   var localMap={};
   state.tasks.forEach(function(t){localMap[t.id]=t;});
@@ -1719,18 +1764,18 @@ function showImportComparison(data){
   modal.querySelector('#icmpCancel').onclick=function(){overlay.remove();};
 
   modal.querySelector('#icmpMerge').onclick=async function(){
+    // Add new tasks
     newTasks.forEach(function(t){state.tasks.push(t);});
+    // Deep merge conflicts
     conflicts.forEach(function(c){
-      if(c.winner==='remote'){
-        var idx=state.tasks.findIndex(function(t){return t.id===c.local.id;});
-        if(idx>=0)state.tasks[idx]=c.remote;
-      }
+      var idx=state.tasks.findIndex(function(t){return t.id===c.local.id;});
+      if(idx>=0)state.tasks[idx]=deepMergeTasks(c.local,c.remote);
     });
     await saveState();
     await recordSync();
     renderAll();
     overlay.remove();
-    showToast(newTasks.length+' ajout(s), '+conflicts.length+' conflit(s) resolus ✓','success');
+    showToast(newTasks.length+' ajout(s), '+conflicts.length+' conflit(s) fusionnés ✓','success');
   };
 
   modal.querySelector('#icmpReplace').onclick=async function(){
@@ -1809,12 +1854,21 @@ function openFabMenu(){
 }
 // ── INIT ─────────────────────────────────────────────────────────────────────
 async function init(){
+  // 1. Charger localStorage IMMEDIATEMENT — offline ou pas
   await loadState();
   await loadSyncMeta();
   gasLoadUrl();
 
-  // Auto-pull from Google Sheets if local storage is empty
-  if(state.tasks.length===0&&GAS_URL&&gasIsOnline()){
+  // 2. Afficher tout de suite les données locales
+  renderAll();
+
+  // 3. Mettre à jour le voyant sync
+  if(!GAS_URL)updateGsDot('nourl');
+  else if(!gasIsOnline())updateGsDot('offline');
+  else updateGsDot('ok');
+
+  // 4. Si connecté ET localStorage vide → auto-pull Google Sheets en arrière-plan
+  if(GAS_URL&&gasIsOnline()&&state.tasks.length===0){
     updateGsDot('pulling');
     try{
       var r=await fetch(GAS_URL+'?action=get&t='+Date.now());
@@ -1826,24 +1880,20 @@ async function init(){
         await saveState();
         await recordSync();
         updateGsDot('ok');
-        showToast('Données récupérées ✓','success');
+        renderAll();
+        showToast('Données récupérées depuis Google Sheets ✓','success');
       }
-    }catch(e){updateGsDot('error');}
+    }catch(e){
+      // Pas de réseau ou erreur — on garde ce qu'on a localement
+      updateGsDot(gasIsOnline()?'error':'offline');
+    }
   }
 
-  if(!GAS_URL)updateGsDot('nourl');
-  else if(!gasIsOnline())updateGsDot('offline');
-  else if(state.tasks.length>0)updateGsDot('ok');
-
-  // Register service worker
+  // 5. Register service worker (GitHub Pages)
   if('serviceWorker' in navigator){
-    navigator.serviceWorker.register('/flowtask/sw.js',{scope:'/flowtask/'}).catch(function(e){
-      // Try root scope as fallback
-      navigator.serviceWorker.register('sw.js').catch(function(){});
-    });
+    navigator.serviceWorker.register('/flowtask/sw.js',{scope:'/flowtask/'})
+      .catch(function(){navigator.serviceWorker.register('sw.js').catch(function(){});});
   }
-
-  renderAll();
 }
 
 // Error handlers
