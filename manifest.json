@@ -2,8 +2,8 @@
   "name": "FlowTask",
   "short_name": "FlowTask",
   "description": "Gestion de taches RDZ Security Management",
-  "start_url": "/",
-  "scope": "/",
+  "start_url": "/flowtask/",
+  "scope": "/flowtask/",
   "display": "standalone",
   "background_color": "#f4f6fa",
   "theme_color": "#5b4fd4",
@@ -12,7 +12,8 @@
     {
       "src": "https://raw.githubusercontent.com/twitter/twemoji/master/assets/72x72/2705.png",
       "sizes": "72x72",
-      "type": "image/png"
+      "type": "image/png",
+      "purpose": "any maskable"
     }
   ]
 }
