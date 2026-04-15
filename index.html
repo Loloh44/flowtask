@@ -1807,6 +1807,67 @@ function openFabMenu(){
   overlay.appendChild(container);
   document.body.appendChild(overlay);
 }
+// ── INIT ─────────────────────────────────────────────────────────────────────
+async function init(){
+  await loadState();
+  await loadSyncMeta();
+  gasLoadUrl();
+
+  // Auto-pull from Google Sheets if local storage is empty
+  if(state.tasks.length===0&&GAS_URL&&gasIsOnline()){
+    updateGsDot('pulling');
+    try{
+      var r=await fetch(GAS_URL+'?action=get&t='+Date.now());
+      var text=await r.text();
+      var data=JSON.parse(text);
+      if(data.ok&&data.data&&data.data.tasks&&data.data.tasks.length>0){
+        state.tasks=data.data.tasks;
+        if(data.data.categories&&data.data.categories.length)state.categories=data.data.categories;
+        await saveState();
+        await recordSync();
+        updateGsDot('ok');
+        showToast('Données récupérées ✓','success');
+      }
+    }catch(e){updateGsDot('error');}
+  }
+
+  if(!GAS_URL)updateGsDot('nourl');
+  else if(!gasIsOnline())updateGsDot('offline');
+  else if(state.tasks.length>0)updateGsDot('ok');
+
+  // Register service worker
+  if('serviceWorker' in navigator){
+    navigator.serviceWorker.register('/flowtask/sw.js',{scope:'/flowtask/'}).catch(function(e){
+      // Try root scope as fallback
+      navigator.serviceWorker.register('sw.js').catch(function(){});
+    });
+  }
+
+  renderAll();
+}
+
+// Error handlers
+function showFatalError(e){
+  logErr('fatal',e);
+}
+var _errLog=[];
+function logErr(label,e){
+  _errLog.push('['+label+']: '+(e&&e.message?e.message:String(e)));
+  var panel=document.getElementById('errPanel');
+  if(!panel){
+    panel=document.createElement('div');
+    panel.id='errPanel';
+    panel.style.cssText='position:fixed;bottom:0;left:0;right:0;background:#fee2e2;border-top:2px solid #dc2626;padding:10px 14px;font-size:11px;font-family:monospace;z-index:9999;max-height:120px;overflow-y:auto;color:#7f1d1d';
+    panel.innerHTML='<strong>⚠️ Erreur</strong> <button onclick="this.parentNode.remove()" style="float:right;background:#dc2626;color:#fff;border:none;padding:2px 8px;border-radius:4px;cursor:pointer">✕</button><div id="errList"></div>';
+    document.body.appendChild(panel);
+  }
+  var list=document.getElementById('errList');
+  if(list){var ln=document.createElement('div');ln.textContent=_errLog[_errLog.length-1];list.appendChild(ln);}
+}
+window.onerror=function(msg,src,line,col,err){logErr('JS',err||msg);return false;};
+window.onunhandledrejection=function(ev){logErr('Promise',ev.reason);};
+init().catch(function(e){logErr('init',e);});
+
 </script>
 </body>
 </html>
